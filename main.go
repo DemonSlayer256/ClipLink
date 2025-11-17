@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 	"net/http"
-	"net/url"
 	"encoding/json"
 	"encoding/base64"
 	"crypto/rand"
@@ -46,7 +45,7 @@ func get_uri() string{
 
 func initMongo() {
 	clientOps := options.Client().ApplyURI(get_uri())
-	ctx, cancel := context.WithTimeout(context.Background(), 30 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
 	defer cancel()
 	client, err := mongo.Connect(clientOps) 
 	if err != nil{
@@ -80,7 +79,7 @@ func main(){
 //Function to redirect the shortened links with the original ones
 func redirecter (w http.ResponseWriter, r *http.Request){
 	short := r.PathValue("shortened")
-	log.Printf("The path value is %s", short)
+	log.Printf("The path value is ", short)
 	var doc URLMapping
 	err := coll.FindOne(r.Context(), bson.M{"shorted": short}).Decode(&doc)
 	if err != nil{
@@ -90,39 +89,18 @@ func redirecter (w http.ResponseWriter, r *http.Request){
 	http.Redirect(w, r, doc.Link, http.StatusFound)
 }
 
-func normalize (link string) string {
-	parsed, err := url.Parse(link)
-	if err != nil{
-		log.Println("Error in parsing url : ", err)
-		return ""
-	}
-	normalized := parsed.Host + parsed.Path
-	if parsed.RawQuery != ""{
-		normalized += "?" + parsed.RawQuery;
-	}
-	if parsed.Fragment != ""{
-		normalized += "#" + parsed.Fragment
-	}
-	return normalized 
-}
-
 func shorten(w http.ResponseWriter, r *http.Request){
 	var data struct{
 		URL string `json:"url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil{
 		http.Error(w, "Invalid JSON data", http.StatusBadRequest)
-		log.Println("The Error is : ", err, r.Body)
+		log.Printf("The error is : ", err)
 		return
 	}
 	defer r.Body.Close()
-	log.Printf("Recieved: Link: %s", data.URL)
-	normalized := normalize(data.URL)
-	if  normalized == ""{
-		jsonResponse(w, map[string]string{"Error": "Invalid URL. Expected {\"url\": \"https://example.com\"} but recieved something else"}, http.StatusBadRequest)
-		return
-	}
-	if valid_url := check("link", normalized, true); valid_url != ""{
+	log.Printf("Recieved: Link:%s", data.URL)
+	if valid_url := check("link", data.URL, true); valid_url != ""{
 		resp := map[string]string{
 			"shorted": valid_url,
 		}
@@ -130,10 +108,10 @@ func shorten(w http.ResponseWriter, r *http.Request){
 		return
 	}
 	code := code_gen()
-	log.Printf("The value of code is: %s", code)
+	log.Printf("The value of code is: ", code)
 	doc := URLMapping{
 		Id : bson.NewObjectID(),
-		Link: normalized,
+		Link: data.URL,
 		Shorted: code,
 		Expires_at: time.Now().Add(time.Hour * max_TTL),
 		Created_at : time.Now(),
@@ -141,7 +119,7 @@ func shorten(w http.ResponseWriter, r *http.Request){
 	jsonResponse(w, map[string]string{"shorted_value" : code}, http.StatusCreated)
 	if _, err := coll.InsertOne(r.Context(), doc); err != nil{
 		http.Error(w, "Insertion Failed", http.StatusInternalServerError)
-		log.Println("Error insertion: ", err)
+		log.Printf("Error insertion: ", err)
 		return
 	}
 }
@@ -172,7 +150,7 @@ func check(key string, value string, is_update bool) string {
     if err != nil {
         if err == mongo.ErrNoDocuments {
             // document not found, handle accordingly
-            log.Println("No document found for value:", value)
+            log.Println("No document found for key:", key)
             return ""
         } else {
             log.Fatal(err)
