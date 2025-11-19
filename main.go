@@ -1,6 +1,7 @@
 package main
 
 import (
+	"ClipLink/middleware"
 	m "ClipLink/models"
 	"bufio"
 	"context"
@@ -14,7 +15,7 @@ import (
 	"os"
 	"strings"
 	"time"
-	"ClipLink/middleware"
+
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -146,6 +147,7 @@ func main() {
 	initMongo()
 	router := http.NewServeMux()
 	router.Handle("/", http.FileServer(http.Dir("./static")))
+	router.Handle("DELETE /shorten", middleware.Auth(http.HandlerFunc(delete_link)))
 	router.Handle("POST /shorten", middleware.Auth(http.HandlerFunc(shorten)))
 	router.HandleFunc("POST /register", register)
 	router.HandleFunc("POST /login", login)
@@ -153,7 +155,7 @@ func main() {
 	router.Handle("GET /register", http.FileServer(http.Dir("./static")))
 	router.HandleFunc("GET /{shortened}", redirecter)
 	server := http.Server{
-		Addr : ":8080",
+		Addr:    ":8080",
 		Handler: router,
 	}
 	server.ListenAndServe()
@@ -170,6 +172,33 @@ func redirecter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, doc.Link, http.StatusFound)
+}
+
+func delete_link(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	username, ok := r.Context().Value("username").(string)
+	if !ok {
+		jsonResponse(w, map[string]string{"Error": "Something happened"}, http.StatusInternalServerError)
+	}
+	var data struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		http.Error(w, "Invalid JSON data", http.StatusBadRequest)
+		log.Println("The Error is : ", err, r.Body)
+		return
+	}
+	if data.Code == "" {
+		http.Error(w, "Code should be present", http.StatusBadRequest)
+		return
+	}
+	if _, err := link_coll.DeleteOne(ctx, bson.M{"shorted": data.Code, "user": username}); err != nil {
+		http.Error(w, "The link is not found", http.StatusBadRequest)
+		log.Println("An error in deletion: ", err)
+		return
+	}
+	jsonResponse(w, map[string]string{"Message": "Successfully deleted"}, http.StatusFound)
 }
 
 func normalize(link string) string {
@@ -197,6 +226,10 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 		log.Println("The Error is : ", err, r.Body)
 		return
 	}
+	username, ok := r.Context().Value("username").(string)
+	if !ok {
+		jsonResponse(w, map[string]string{"Error": "Something happened"}, http.StatusInternalServerError)
+	}
 	defer r.Body.Close()
 	log.Printf("Recieved: Link: %s", data.URL)
 	normalized := normalize(data.URL)
@@ -204,7 +237,7 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"Error": "Invalid URL. Expected {\"url\": \"https://example.com\"} but recieved something else"}, http.StatusBadRequest)
 		return
 	}
-	if valid_url := check("link", normalized, true); valid_url != "" {
+	if valid_url := check("link", normalized, true, username); valid_url != "" {
 		resp := map[string]string{
 			"shorted": valid_url,
 		}
@@ -219,6 +252,7 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 		Shorted:    code,
 		Expires_at: time.Now().Add(time.Hour * max_TTL),
 		Created_at: time.Now(),
+		User:       username,
 	}
 	jsonResponse(w, map[string]string{"shorted_value": code}, http.StatusCreated)
 	if _, err := link_coll.InsertOne(r.Context(), doc); err != nil {
@@ -238,7 +272,7 @@ func jsonResponse(w http.ResponseWriter, data interface{}, status int) {
 }
 
 // Function to check the URL is already shorted
-func check(key string, value string, is_update bool) string {
+func check(key string, value string, is_update bool, user string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -258,14 +292,15 @@ func check(key string, value string, is_update bool) string {
 			log.Fatal(err)
 		}
 	}
-	if is_update {
+	if is_update && doc.User == user {
 		update := bson.M{"$set": bson.M{"expiresAt": time.Now().Add(max_TTL * time.Hour)}}
 		_, err := link_coll.UpdateOne(ctx, filter, update)
 		if err != nil {
 			log.Fatal(err)
 		}
+		return doc.Shorted
 	}
-	return doc.Shorted
+	return ""
 }
 
 func code_gen() string {
@@ -276,7 +311,7 @@ func code_gen() string {
 		return ""
 	}
 	code := base64.RawURLEncoding.EncodeToString(b)
-	if check("shorted", code, false) != "" {
+	if check("shorted", code, false, "") != "" {
 		return code_gen()
 	}
 	return code

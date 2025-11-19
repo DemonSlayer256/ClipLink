@@ -2,6 +2,7 @@ package models
 
 import (
 	"time"
+
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -22,4 +23,5 @@ type URLMapping struct {
 	Shorted    string        `bson:"shorted"`
 	Expires_at time.Time     `bson:"expiresAt, omitempty"`
 	Created_at time.Time     `bson:"createAt"`
+	User       string        `bson:"user"`
 }
