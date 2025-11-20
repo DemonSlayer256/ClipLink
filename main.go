@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"time"
+
 	"github.com/golang-jwt/jwt/v4"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -23,11 +24,11 @@ import (
 )
 
 var (
-	user_coll *mongo.Collection
-	link_coll *mongo.Collection
-	max_TTL time.Duration = 48
-	max_url_limit int = 5
-	signingKey = []byte(LoadEnv("SECURE_KEY"))
+	user_coll     *mongo.Collection
+	link_coll     *mongo.Collection
+	max_TTL       time.Duration = 48
+	max_url_limit int           = 5
+	signingKey                  = []byte(LoadEnv("SECURE_KEY"))
 )
 
 func hasher(pass string) string {
@@ -143,8 +144,8 @@ func initMongo() {
 func generateToken(user string) (string, error) {
 	claims := m.JWT{
 		Username: user,
-		Exp: time.Now().Add(1 * time.Hour).Unix(),
-		Iat: time.Now().Unix(),
+		Exp:      time.Now().Add(1 * time.Hour).Unix(),
+		Iat:      time.Now().Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(signingKey)
@@ -199,7 +200,7 @@ func main() {
 	router.Handle("GET /register", http.FileServer(http.Dir("./static/register.html")))
 	router.HandleFunc("GET /{shortened}", redirecter)
 	server := http.Server{
-		Addr:    ":8090",
+		Addr:    ":8080",
 		Handler: router,
 	}
 	server.ListenAndServe()
@@ -274,11 +275,11 @@ func within_limit(user string) bool {
 	defer cancel()
 	var data m.User
 	err := user_coll.FindOne(ctx, bson.M{"user": user}).Decode(&data)
-	if err != nil{
+	if err != nil {
 		log.Println("Error finding user: ", err)
 		return false
 	}
-	if data.User == user && data.Left > 0{
+	if data.User == user && data.Left > 0 {
 		update := bson.M{"$inc": bson.M{"left": -1}}
 		if _, err := user_coll.UpdateOne(ctx, bson.M{"user": user}, update); err != nil {
 			log.Println("Error updating remaining: ", err)

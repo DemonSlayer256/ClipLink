@@ -20,10 +20,7 @@ and supports user authentication through JSON Web Tokens (JWT).
   - [Shortening a URL](#shortening-a-url)
   - [Deleting a URL](#deleting-a-url)
   - [Redirecting](#redirecting)
-- [Testing](#testing)
-- [Contributing](#contributing)
-- [License](#license)
-- [Acknowledgments](#acknowledgments)
+  - [End Note](#endnote)
 
 ## Features
 
@@ -51,17 +48,25 @@ and supports user authentication through JSON Web Tokens (JWT).
 ### Steps
 
 1. Clone the repository:
-   git clone https://github.com/DemonSlayer256/ClipLink.git
-   cd ClipLink
+  ```bash
+  git clone https://github.com/Dome
+  cd ClipLink
+  ```
 
 2. Install the necessary Go modules:
-   go mod tidy
+  ```bash
+  go mod tidy
+  ```
 
 3. Create a .env file in the root of the project with the MongoDB URI:
-   MONGODB_URI="mongodb://localhost:27017"
+  ```bash
+  MONGODB_URI="mongodb://localhost:27017"
+  ```
 
 4. Run the service:
+  ```bash
    go run main.go
+   ```
 
 The server will start by default on port **8080**.
 
@@ -77,33 +82,42 @@ You can configure various parameters in the code:
 ### Registering a User
 
 To register a new user, send a POST request to /register with the following JSON body:
+```bash
 {
   "user": "username",
   "password": "yourpassword"
 }
+```
 
 ### Logging In
 
 To log in, send a POST request to /login with the user's credentials:
+```bash
 {
   "username": "username",
   "password": "yourpassword"
 }
+```
+
 You will receive a token upon successful authentication.
 
 ### Shortening a URL
 
 Send a POST request to /shorten with the following JSON body and include the JWT token in the Authorization header:
+```bash
 {
   "url": "https://example.com"
 }
+```
 
 ### Deleting a URL
 
 To delete a shortened URL, send a DELETE request to /shorten with the JSON body containing the shortened code, and include the JWT token in the Authorization header:
+```bash
 {
   "code": "shortenedCode"
 }
+```
 
 ### Redirecting
 
@@ -116,10 +130,12 @@ Request the shortened URL (e.g., http://localhost:8080/yourShortCode) to be redi
 - **Endpoint**: /register
 - **Method**: POST
 - **Body**:
+```bash
 {
   "user": "username",
   "password": "yourpassword"
 }
+```
 - **Responses**:
     - 201 Created: Successful registration.
     - 409 Conflict: User already exists.
@@ -130,10 +146,12 @@ Request the shortened URL (e.g., http://localhost:8080/yourShortCode) to be redi
 - **Endpoint**: /login
 - **Method**: POST
 - **Body**:
+```bash
 {
   "username": "username",
   "password": "yourpassword"
 }
+```
 - **Responses**:
     - 200 OK: Successful login with a token.
     - 401 Unauthorized: Invalid credentials.
@@ -144,9 +162,11 @@ Request the shortened URL (e.g., http://localhost:8080/yourShortCode) to be redi
 - **Method**: POST
 - **Headers**: Authorization: Bearer <token>
 - **Body**:
+```bash
 {
   "url": "https://example.com"
 }
+```
 
 ### Deleting a URL
 
@@ -154,13 +174,21 @@ Request the shortened URL (e.g., http://localhost:8080/yourShortCode) to be redi
 - **Method**: DELETE
 - **Headers**: Authorization: Bearer <token>
 - **Body**:
+```bash
 {
   "code": "shortenedCode"
 }
+```
 
 ### Redirecting
 
 - **Endpoint**: /{shortened}
 - **Method**: GET
 - **Responses**:
-    - 302 Found: Redirects to the
+    - 302 Found: Redirects to the link associated with the shortened code
+    - 404 NotFound: The code has expired or the page is not found
+
+## End Note
+
+ ClipLink provides a simple, secure, and extensible URL‑shortening service. By leveraging Go's performance, MongoDB's flexible storage, and JWT‑based authentication, the project demonstrates a production‑ready backend that can be easily deployed, customized, and integrated into larger systems.
+Feel free to fork, extend the feature set (e.g., analytics, custom domains) or contribute improvements via pull requests.
