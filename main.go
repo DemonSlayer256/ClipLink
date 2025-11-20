@@ -15,16 +15,20 @@ import (
 	"os"
 	"strings"
 	"time"
-
+	"github.com/golang-jwt/jwt/v4"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
-var user_coll *mongo.Collection
-var link_coll *mongo.Collection
-var max_TTL time.Duration = 48
+var (
+	user_coll *mongo.Collection
+	link_coll *mongo.Collection
+	max_TTL time.Duration = 48
+	max_url_limit int = 5
+	signingKey = []byte(LoadEnv("SECURE_KEY"))
+)
 
 func hasher(pass string) string {
 	hash := sha256.Sum256([]byte(pass))
@@ -42,7 +46,7 @@ func register(w http.ResponseWriter, r *http.Request) {
 
 	// Hash the password before storing
 	newUser.Pass = hasher(newUser.Pass)
-
+	newUser.Left = max_url_limit
 	// Check if user already exists
 	var existingUser m.User
 	err := user_coll.FindOne(r.Context(), bson.M{"user": newUser.User}).Decode(&existingUser)
@@ -62,22 +66,53 @@ func register(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"message": "User registered successfully"}, http.StatusCreated)
 }
 
-func get_uri() string {
-	var uri string
+func LoadEnv(keys ...string) string {
+	env := make(map[string]string)
+
 	file, err := os.Open(".env")
 	if err != nil {
-		log.Fatal(err)
+		return ""
 	}
-	scanner := bufio.NewScanner(file)
-	scanner.Scan()
-	line := scanner.Text()
-	uri = strings.SplitN(line, "=", 2)[1]
-	uri = uri[1 : len(uri)-1]
-	return uri
-}
+	defer file.Close()
 
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue // Skip empty lines and comments
+		}
+		// Split line into key-value pairs
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue // Skip invalid lines
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		// Remove quotes if present
+		if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) || (strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+			value = value[1 : len(value)-1]
+		}
+		env[key] = value
+	}
+
+	if err := scanner.Err(); err != nil {
+		return ""
+	}
+
+	// Filter only the requested keys
+	var required string
+	for _, key := range keys {
+		if value, exists := env[key]; exists {
+			required = value
+			break
+		}
+	}
+
+	return required
+}
 func initMongo() {
-	clientOps := options.Client().ApplyURI(get_uri())
+	clientOps := options.Client().ApplyURI(LoadEnv("MONGO_URI"))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	client, err := mongo.Connect(clientOps)
@@ -90,7 +125,13 @@ func initMongo() {
 	}
 	log.Println("Connexted to Mongo. yay!")
 	link_coll = client.Database("shortener").Collection("links")
+	if err := link_coll.Drop(ctx); err != nil {
+		log.Fatal(err)
+	}
 	user_coll = client.Database("shortener").Collection("users")
+	if err := user_coll.Drop(ctx); err != nil {
+		log.Fatal(err)
+	}
 	index := mongo.IndexModel{
 		Keys:    bson.M{"expiresAt": 1},
 		Options: options.Index().SetExpireAfterSeconds(0),
@@ -99,17 +140,18 @@ func initMongo() {
 		log.Fatal("Error in TTL Index creation: ", err)
 	}
 }
-func generateToken(user string) string {
-	exp := time.Now().Add(1 * time.Hour)
+func generateToken(user string) (string, error) {
 	claims := m.JWT{
 		Username: user,
-		Exp:      exp.Format(time.RFC3339),
+		Exp: time.Now().Add(1 * time.Hour).Unix(),
+		Iat: time.Now().Unix(),
 	}
-	token, err := json.Marshal(claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(signingKey)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return string(token)
+	return tokenString, nil
 }
 func login(w http.ResponseWriter, r *http.Request) {
 	var data struct {
@@ -133,10 +175,10 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := generateToken(data.Username)
-	if token == "" {
+	token, err := generateToken(data.Username)
+	if err != nil {
 		http.Error(w, "Token generation error", http.StatusInternalServerError)
-		log.Println("Error in token generation")
+		log.Println("Error in token generation: ", err)
 		return
 	}
 
@@ -147,15 +189,17 @@ func main() {
 	initMongo()
 	router := http.NewServeMux()
 	router.Handle("/", http.FileServer(http.Dir("./static")))
+	// The below shorten can be changed to use GET and POST methods for a different route named Delete_url. However
+	// Since this is an API and not a webpage, DELETE is used
 	router.Handle("DELETE /shorten", middleware.Auth(http.HandlerFunc(delete_link)))
 	router.Handle("POST /shorten", middleware.Auth(http.HandlerFunc(shorten)))
 	router.HandleFunc("POST /register", register)
 	router.HandleFunc("POST /login", login)
-	router.Handle("GET /login", http.FileServer(http.Dir("./static")))
-	router.Handle("GET /register", http.FileServer(http.Dir("./static")))
+	router.Handle("GET /login", http.FileServer(http.Dir("./static/")))
+	router.Handle("GET /register", http.FileServer(http.Dir("./static/register.html")))
 	router.HandleFunc("GET /{shortened}", redirecter)
 	server := http.Server{
-		Addr:    ":8080",
+		Addr:    ":8090",
 		Handler: router,
 	}
 	server.ListenAndServe()
@@ -164,14 +208,15 @@ func main() {
 // Function to redirect the shortened links with the original ones
 func redirecter(w http.ResponseWriter, r *http.Request) {
 	short := r.PathValue("shortened")
-	log.Printf("The path value is %s", short)
 	var doc m.URLMapping
 	err := link_coll.FindOne(r.Context(), bson.M{"shorted": short}).Decode(&doc)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	http.Redirect(w, r, doc.Link, http.StatusFound)
+	//Since the normalized link does not contain scheme, we default it to http
+	var link string = "https://" + doc.Link
+	http.Redirect(w, r, link, http.StatusFound)
 }
 
 func delete_link(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +234,7 @@ func delete_link(w http.ResponseWriter, r *http.Request) {
 		log.Println("The Error is : ", err, r.Body)
 		return
 	}
+	defer r.Body.Close()
 	if data.Code == "" {
 		http.Error(w, "Code should be present", http.StatusBadRequest)
 		return
@@ -196,6 +242,12 @@ func delete_link(w http.ResponseWriter, r *http.Request) {
 	if _, err := link_coll.DeleteOne(ctx, bson.M{"shorted": data.Code, "user": username}); err != nil {
 		http.Error(w, "The link is not found", http.StatusBadRequest)
 		log.Println("An error in deletion: ", err)
+		return
+	}
+	update := bson.M{"$inc": bson.M{"left": 1}}
+	if _, err := user_coll.UpdateOne(ctx, bson.M{"user": username}, update); err != nil {
+		http.Error(w, "Error updating remaining urls", http.StatusInternalServerError)
+		log.Println("Error updating remaining: ", err)
 		return
 	}
 	jsonResponse(w, map[string]string{"Message": "Successfully deleted"}, http.StatusFound)
@@ -217,6 +269,26 @@ func normalize(link string) string {
 	return normalized
 }
 
+func within_limit(user string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var data m.User
+	err := user_coll.FindOne(ctx, bson.M{"user": user}).Decode(&data)
+	if err != nil{
+		log.Println("Error finding user: ", err)
+		return false
+	}
+	if data.User == user && data.Left > 0{
+		update := bson.M{"$inc": bson.M{"left": -1}}
+		if _, err := user_coll.UpdateOne(ctx, bson.M{"user": user}, update); err != nil {
+			log.Println("Error updating remaining: ", err)
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 func shorten(w http.ResponseWriter, r *http.Request) {
 	var data struct {
 		URL string `json:"url"`
@@ -229,7 +301,9 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 	username, ok := r.Context().Value("username").(string)
 	if !ok {
 		jsonResponse(w, map[string]string{"Error": "Something happened"}, http.StatusInternalServerError)
+		return
 	}
+
 	defer r.Body.Close()
 	log.Printf("Recieved: Link: %s", data.URL)
 	normalized := normalize(data.URL)
@@ -242,6 +316,10 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 			"shorted": valid_url,
 		}
 		jsonResponse(w, resp, http.StatusCreated)
+		return
+	}
+	if !within_limit(username) {
+		jsonResponse(w, map[string]string{"Error": "You cannot have more than 5 active links."}, http.StatusBadRequest)
 		return
 	}
 	code := code_gen()
@@ -286,7 +364,6 @@ func check(key string, value string, is_update bool, user string) string {
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// document not found, handle accordingly
-			log.Println("No document found for value:", value)
 			return ""
 		} else {
 			log.Fatal(err)
