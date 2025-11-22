@@ -5,6 +5,7 @@ import (
 	m "ClipLink/models"
 	"bufio"
 	"context"
+	"fmt"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -15,7 +16,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
 	"github.com/golang-jwt/jwt/v4"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -189,21 +189,38 @@ func login(w http.ResponseWriter, r *http.Request) {
 func main() {
 	initMongo()
 	router := http.NewServeMux()
-	router.Handle("/", http.FileServer(http.Dir("./static")))
+	router.HandleFunc("/", renderer)
 	// The below shorten can be changed to use GET and POST methods for a different route named Delete_url. However
 	// Since this is an API and not a webpage, DELETE is used
 	router.Handle("DELETE /shorten", middleware.Auth(http.HandlerFunc(delete_link)))
 	router.Handle("POST /shorten", middleware.Auth(http.HandlerFunc(shorten)))
 	router.HandleFunc("POST /register", register)
 	router.HandleFunc("POST /login", login)
-	router.Handle("GET /login", http.FileServer(http.Dir("./static/")))
-	router.Handle("GET /register", http.FileServer(http.Dir("./static/register.html")))
+	router.Handle("GET /user/{route}", http.HandlerFunc(renderer))
 	router.HandleFunc("GET /{shortened}", redirecter)
 	server := http.Server{
 		Addr:    ":8080",
 		Handler: router,
 	}
 	server.ListenAndServe()
+}
+
+func renderer(w http.ResponseWriter, r *http.Request) {
+		path := r.PathValue("route")
+		log.Println(r.URL.Path)
+		if path == "" || path == "/" {
+			fmt.Printf("The path is : %s", r.URL.EscapedPath())
+			http.Redirect(w, r, "/user/login", http.StatusFound)
+			return
+		}
+		if strings.Contains(path, ".."){
+			http.Error(w, "Forbidden path", http.StatusForbidden)
+			return
+		}
+		if !strings.HasSuffix(path, ".html") {
+			path = path + ".html"
+		}
+		http.ServeFile(w, r, "./static/" + path)
 }
 
 // Function to redirect the shortened links with the original ones
