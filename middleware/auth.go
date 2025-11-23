@@ -13,37 +13,36 @@ var signingKey = []byte("Some-secret-key") // You should load this from an envir
 
 func Auth(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        go func() {
-            auth := r.Header.Get("Authorization")
-            if auth == "" {
-                http.Error(w, "Missing or Invalid token", http.StatusUnauthorized)
-                return
-            }
-            tokenString := strings.TrimPrefix(auth, "Bearer ")
-            if tokenString == "" {
-                http.Error(w, "Missing or Invalid token", http.StatusUnauthorized)
-                return
-            }
+        auth := r.Header.Get("Authorization")
+        if auth == "" {
+            http.Error(w, "Missing or Invalid token", http.StatusUnauthorized)
+            return
+        }
+        tokenString := strings.TrimPrefix(auth, "Bearer ")
+        if tokenString == "" {
+            http.Error(w, "Missing or Invalid token", http.StatusUnauthorized)
+            return
+        }
 
-            claims := &m.JWT{}
-            token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-                if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-                    return nil, http.ErrNotSupported
-                }
-                return signingKey, nil
-            })
-
-            if err != nil || !token.Valid {
-                http.Error(w, "Invalid token", http.StatusUnauthorized)
-                return
+        claims := &m.JWT{}
+        token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+            if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+                return nil, http.ErrNotSupported
             }
-            if claims.Exp < time.Now().Unix() {
-                http.Error(w, "Token Expired", http.StatusUnauthorized)
-                return
-            }
+            return signingKey, nil
+        })
 
-            ctx := context.WithValue(r.Context(), "username", claims.Username)
-            next.ServeHTTP(w, r.WithContext(ctx))
-        }()
+        if err != nil || !token.Valid {
+            http.Error(w, "Invalid token", http.StatusUnauthorized)
+            return
+        }
+        if claims.Exp < time.Now().Unix() {
+            http.Error(w, "Token Expired", http.StatusUnauthorized)
+            return
+        }
+
+        ctx := context.WithValue(r.Context(), "username", claims.Username)
+        next.ServeHTTP(w, r.WithContext(ctx))
+
     })
 }

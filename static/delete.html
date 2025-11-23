@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delete Link</title>
+</head>
+<body>
+    <h1>Delete Your Shortened Link</h1>
+    <form id="deleteForm">
+        <label for="code">Shortened Code:</label>
+        <input type="text" id="code" name="code" required>
+        <br>
+        <button type="submit">Delete</button>
+    </form>
+
+    <script>
+    async function fetchWithToken(url, options = {}) {
+        const token = localStorage.getItem('jwt');
+        const headers = { 'Content-Type': 'application/json', ...options.headers };
+
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        return fetch(url, { ...options, headers });
+    }
+
+    document.getElementById('deleteForm').onsubmit = async function(e) {
+        e.preventDefault();
+        const code = document.getElementById('code').value;
+
+        const response = await fetchWithToken('/delete', {
+            method: 'POST',
+            body: JSON.stringify({ code })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            alert(data.message || "Error occurred");
+        } else {
+            alert(data.Message || "Successfully deleted");
+        }
+    };
+    </script>
+</body>
+</html>

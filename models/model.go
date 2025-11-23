@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
-	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type JWT struct {
@@ -15,17 +15,17 @@ type JWT struct {
 }
 
 type User struct {
-	Id   bson.ObjectID `bson:"_id"`
-	User string        `bson:"user"`
-	Pass string        `bson:"pass"`
-	Left int           `bson:"left"`
+	Id   primitive.ObjectID `bson:"_id" json:"id"`
+	User string             `bson:"user" json:"user"`
+	Pass string             `bson:"pass" json:"pass"`
+	Left int                `bson:"left" json:"left"`
 }
 
 type URLMapping struct {
-	Id         bson.ObjectID `bson:"_id"`
-	Link       string        `bson:"link"`
-	Shorted    string        `bson:"shorted"`
-	Expires_at time.Time     `bson:"expiresAt, omitempty"`
-	Created_at time.Time     `bson:"createAt"`
-	User       string        `bson:"user"`
+	Id         primitive.ObjectID `bson:"_id" json:"id"`
+	Link       string             `bson:"link" json:"link"`
+	Shorted    string             `bson:"shorted" json:"shorted"`
+	Expires_at time.Time          `bson:"expiresAt,omitempty" json:"expiresAt,omitempty"`
+	Created_at time.Time          `bson:"createAt" json:"createdAt"`
+	User       string             `bson:"user" json:"user"`
 }

@@ -5,18 +5,20 @@ import (
 	m "ClipLink/models"
 	"bufio"
 	"context"
-	"fmt"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
+
 	"github.com/golang-jwt/jwt/v4"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -37,35 +39,53 @@ func hasher(pass string) string {
 }
 
 func register(w http.ResponseWriter, r *http.Request) {
-	var newUser m.User
-	if err := json.NewDecoder(r.Body).Decode(&newUser); err != nil {
-		http.Error(w, "Invalid JSON data", http.StatusBadRequest)
-		log.Println("Error decoding JSON:", err)
-		return
-	}
-	defer r.Body.Close()
+    var newUser m.User
 
-	// Hash the password before storing
-	newUser.Pass = hasher(newUser.Pass)
-	newUser.Left = max_url_limit
-	// Check if user already exists
-	var existingUser m.User
-	err := user_coll.FindOne(r.Context(), bson.M{"user": newUser.User}).Decode(&existingUser)
-	if err == nil {
-		http.Error(w, "User already exists", http.StatusConflict)
-		return
-	}
+    // Decode JSON safely
+    if err := json.NewDecoder(r.Body).Decode(&newUser); err != nil {
+        jsonResponse(w, map[string]string{"message": "Invalid JSON data"}, http.StatusBadRequest)
+        log.Println("Error decoding JSON:", err)
+        return
+    }
+    defer r.Body.Close()
 
-	// Insert new user into collection
-	_, err = user_coll.InsertOne(r.Context(), newUser)
-	if err != nil {
-		http.Error(w, "Error inserting user", http.StatusInternalServerError)
-		log.Println("Error inserting user:", err)
-		return
-	}
+    // Validate required fields
+    if strings.TrimSpace(newUser.User) == "" || strings.TrimSpace(newUser.Pass) == "" {
+        jsonResponse(w, map[string]string{"message": "Username and password are required"}, http.StatusBadRequest)
+        return
+    }
 
-	jsonResponse(w, map[string]string{"message": "User registered successfully"}, http.StatusCreated)
+    // Ensure the user does not already exist
+    var existingUser m.User
+    err := user_coll.FindOne(r.Context(), bson.M{"user": newUser.User}).Decode(&existingUser)
+
+    if err != nil && err != mongo.ErrNoDocuments {
+        jsonResponse(w, map[string]string{"message": "Error checking for existing user"}, http.StatusInternalServerError)
+        log.Println("Error checking user:", err)
+        return
+    }
+
+    if err == nil {
+        // user already exists
+        jsonResponse(w, map[string]string{"message": "User already exists"}, http.StatusConflict)
+        return
+    }
+
+    // Now safe to create the new user
+    newUser.Id = primitive.NewObjectID()
+    newUser.Pass = hasher(newUser.Pass) // hash password
+    newUser.Left = max_url_limit
+
+    _, err = user_coll.InsertOne(r.Context(), newUser)
+    if err != nil {
+        jsonResponse(w, map[string]string{"message": "Error inserting user"}, http.StatusInternalServerError)
+        log.Println("Error inserting user:", err)
+        return
+    }
+
+    jsonResponse(w, map[string]string{"message": "User registered successfully"}, http.StatusCreated)
 }
+
 
 func LoadEnv(keys ...string) string {
 	env := make(map[string]string)
@@ -156,11 +176,11 @@ func generateToken(user string) (string, error) {
 }
 func login(w http.ResponseWriter, r *http.Request) {
 	var data struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username string `json:"user"`
+		Password string `json:"pass"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "Invalid JSON data", http.StatusBadRequest)
+		jsonResponse(w, map[string]string{"message" : "Invalid JSON data"}, http.StatusBadRequest)
 		log.Println("Error decoding json: ", err)
 		return
 	}
@@ -168,17 +188,17 @@ func login(w http.ResponseWriter, r *http.Request) {
 	var stored m.User
 	err := user_coll.FindOne(r.Context(), bson.M{"user": data.Username}).Decode(&stored)
 	if err != nil {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		jsonResponse(w, map[string]string{"message" : "Invalid credentials"}, http.StatusUnauthorized)
 		return
 	}
 	if hasher(data.Password) != stored.Pass {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		jsonResponse(w, map[string]string{"message" : "Invalid credentials"}, http.StatusUnauthorized)
 		return
 	}
 
 	token, err := generateToken(data.Username)
 	if err != nil {
-		http.Error(w, "Token generation error", http.StatusInternalServerError)
+		jsonResponse(w, map[string]string{"message" : "Token generation error"}, http.StatusInternalServerError)
 		log.Println("Error in token generation: ", err)
 		return
 	}
@@ -191,8 +211,9 @@ func main() {
 	router := http.NewServeMux()
 	router.HandleFunc("/", renderer)
 	// The below shorten can be changed to use GET and POST methods for a different route named Delete_url. However
-	// Since this is an API and not a webpage, DELETE is used
-	router.Handle("DELETE /shorten", middleware.Auth(http.HandlerFunc(delete_link)))
+	// Since this is an API and not a webpage, DELETE is used but it may be subject to change in future
+	router.Handle("GET /links", middleware.Auth(http.HandlerFunc(send_all)))
+	router.Handle("POST /delete", middleware.Auth(http.HandlerFunc(delete_link)))
 	router.Handle("POST /shorten", middleware.Auth(http.HandlerFunc(shorten)))
 	router.HandleFunc("POST /register", register)
 	router.HandleFunc("POST /login", login)
@@ -205,6 +226,53 @@ func main() {
 	server.ListenAndServe()
 }
 
+func send_all(w http.ResponseWriter, r *http.Request) {
+    ctx, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
+    defer cancel()
+
+    // Retrieve the username from the context
+    user, ok := r.Context().Value("username").(string)
+    if !ok {
+        jsonResponse(w, map[string]string{"Error": "Something happened"}, http.StatusInternalServerError)
+        return
+    }
+
+    // Create a filter to find all links belonging to the user
+    filter := bson.M{"user": user}
+
+    // Find all links for the user
+    cursor, err := link_coll.Find(ctx, filter)
+    if err != nil {
+        jsonResponse(w, map[string]string{"Error": "Error fetching links"}, http.StatusInternalServerError)
+        return
+    }
+    defer cursor.Close(ctx) // Ensure the cursor is closed when done
+
+    // Prepare a slice to hold the links
+    var links []m.URLMapping
+
+    // Iterate through the cursor and decode each link into the slice
+    for cursor.Next(ctx) {
+        var link m.URLMapping
+        if err := cursor.Decode(&link); err != nil {
+            jsonResponse(w, map[string]string{"Error": "Error decoding links"}, http.StatusInternalServerError)
+            return
+        }
+		link.Link =  "https://" + link.Link
+        links = append(links, link)
+    }
+
+    // Check for cursor errors
+    if err := cursor.Err(); err != nil {
+        jsonResponse(w, map[string]string{"Error": "Error during cursor iteration"}, http.StatusInternalServerError)
+        return
+    }
+
+    // Return the list of links as a JSON response
+    jsonResponse(w, links, http.StatusOK)
+}
+
+
 func renderer(w http.ResponseWriter, r *http.Request) {
 		path := r.PathValue("route")
 		log.Println(r.URL.Path)
@@ -214,7 +282,7 @@ func renderer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if strings.Contains(path, ".."){
-			http.Error(w, "Forbidden path", http.StatusForbidden)
+			jsonResponse(w, map[string]string{"message" : "Forbidden path"}, http.StatusForbidden)
 			return
 		}
 		if !strings.HasSuffix(path, ".html") {
@@ -248,23 +316,23 @@ func delete_link(w http.ResponseWriter, r *http.Request) {
 		Code string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "Invalid JSON data", http.StatusBadRequest)
+		jsonResponse(w, map[string]string{"message" : "Invalid JSON data"}, http.StatusBadRequest)
 		log.Println("The Error is : ", err, r.Body)
 		return
 	}
 	defer r.Body.Close()
 	if data.Code == "" {
-		http.Error(w, "Code should be present", http.StatusBadRequest)
+		jsonResponse(w, map[string]string{"message" : "Code should be present"}, http.StatusBadRequest)
 		return
 	}
 	if _, err := link_coll.DeleteOne(ctx, bson.M{"shorted": data.Code, "user": username}); err != nil {
-		http.Error(w, "The link is not found", http.StatusBadRequest)
+		jsonResponse(w, map[string]string{"message" : "The link is not found"}, http.StatusBadRequest)
 		log.Println("An error in deletion: ", err)
 		return
 	}
 	update := bson.M{"$inc": bson.M{"left": 1}}
 	if _, err := user_coll.UpdateOne(ctx, bson.M{"user": username}, update); err != nil {
-		http.Error(w, "Error updating remaining urls", http.StatusInternalServerError)
+		jsonResponse(w, map[string]string{"message" : "Error updating remaining urls"}, http.StatusInternalServerError)
 		log.Println("Error updating remaining: ", err)
 		return
 	}
@@ -312,8 +380,8 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 		URL string `json:"url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "Invalid JSON data", http.StatusBadRequest)
-		log.Println("The Error is : ", err, r.Body)
+		jsonResponse(w, map[string]string{"message" : "Invalid JSON data"}, http.StatusBadRequest)
+		log.Println("The Error is : ", err)
 		return
 	}
 	username, ok := r.Context().Value("username").(string)
@@ -331,7 +399,7 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 	}
 	if valid_url := check("link", normalized, true, username); valid_url != "" {
 		resp := map[string]string{
-			"shorted": valid_url,
+			"shorted_value": valid_url,
 		}
 		jsonResponse(w, resp, http.StatusCreated)
 		return
@@ -343,28 +411,35 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 	code := code_gen()
 	log.Printf("The value of code is: %s", code)
 	doc := m.URLMapping{
-		Id:         bson.NewObjectID(),
+		Id:         primitive.NewObjectID(),
 		Link:       normalized,
 		Shorted:    code,
 		Expires_at: time.Now().Add(time.Hour * max_TTL),
 		Created_at: time.Now(),
 		User:       username,
 	}
-	jsonResponse(w, map[string]string{"shorted_value": code}, http.StatusCreated)
+
 	if _, err := link_coll.InsertOne(r.Context(), doc); err != nil {
-		http.Error(w, "Insertion Failed", http.StatusInternalServerError)
+		jsonResponse(w, map[string]string{"message" : "Insertion Failed"}, http.StatusInternalServerError)
 		log.Println("Error insertion: ", err)
 		return
 	}
+	jsonResponse(w, map[string]string{"shorted_value": code}, http.StatusCreated)
 }
 
 func jsonResponse(w http.ResponseWriter, data interface{}, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
+    w.Header().Set("Content-Type", "application/json")
 
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		http.Error(w, `{"error":"failed to encode json"}`, http.StatusInternalServerError)
-	}
+    b, err := json.Marshal(data)
+    if err != nil {
+        log.Println("Failed to encode JSON response:", err)
+        w.WriteHeader(http.StatusInternalServerError)
+        w.Write([]byte(`{"error":"failed to encode json"}`))
+        return
+    }
+
+    w.WriteHeader(status)
+    w.Write(b)
 }
 
 // Function to check the URL is already shorted
