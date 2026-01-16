@@ -3,7 +3,7 @@ package main
 import (
 	"ClipLink/middleware"
 	m "ClipLink/models"
-	"bufio"
+	"ClipLink/configs"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,10 +13,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
-
 	"github.com/golang-jwt/jwt/v4"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -30,7 +28,7 @@ var (
 	link_coll     *mongo.Collection
 	max_TTL       time.Duration = 48
 	max_url_limit int           = 5
-	signingKey                  = []byte(LoadEnv("SECURE_KEY"))
+	signingKey                  = []byte(configs.LoadEnv("SECURE_KEY"))
 )
 
 func hasher(pass string) string {
@@ -87,53 +85,8 @@ func register(w http.ResponseWriter, r *http.Request) {
 }
 
 
-func LoadEnv(keys ...string) string {
-	env := make(map[string]string)
-
-	file, err := os.Open(".env")
-	if err != nil {
-		return ""
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue // Skip empty lines and comments
-		}
-		// Split line into key-value pairs
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue // Skip invalid lines
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		// Remove quotes if present
-		if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) || (strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
-			value = value[1 : len(value)-1]
-		}
-		env[key] = value
-	}
-
-	if err := scanner.Err(); err != nil {
-		return ""
-	}
-
-	// Filter only the requested keys
-	var required string
-	for _, key := range keys {
-		if value, exists := env[key]; exists {
-			required = value
-			break
-		}
-	}
-
-	return required
-}
 func initMongo() {
-	clientOps := options.Client().ApplyURI(LoadEnv("MONGO_URI"))
+	clientOps := options.Client().ApplyURI(configs.LoadEnv("MONGO_URI"))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	client, err := mongo.Connect(clientOps)
@@ -399,7 +352,7 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 	}
 	if valid_url := check("link", normalized, true, username); valid_url != "" {
 		resp := map[string]string{
-			"shorted_value": valid_url,
+			"short_url": valid_url,
 		}
 		jsonResponse(w, resp, http.StatusCreated)
 		return
@@ -424,7 +377,7 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 		log.Println("Error insertion: ", err)
 		return
 	}
-	jsonResponse(w, map[string]string{"shorted_value": code}, http.StatusCreated)
+	jsonResponse(w, map[string]string{"short_url": code}, http.StatusCreated)
 }
 
 func jsonResponse(w http.ResponseWriter, data interface{}, status int) {

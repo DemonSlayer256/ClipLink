@@ -2,6 +2,7 @@ package middleware
 
 import (
     "context"
+    "ClipLink/configs"
     "net/http"
     "strings"
     "time"
@@ -9,7 +10,7 @@ import (
     m "ClipLink/models"
 )
 
-var signingKey = []byte("Some-secret-key") // You should load this from an environment variable
+var signingKey = []byte(configs.LoadEnv("SECURE_KEY")) // You should load this from an environment variable
 
 func Auth(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
