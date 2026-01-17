@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -31,6 +30,19 @@ var (
 	signingKey                  = []byte(configs.LoadEnv("SECURE_KEY"))
 )
 
+// Added CORS for integration with frontend
+func enablecors(next http.Handler) http.Handler{
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+		w.Header().Set("Access-Control-Allow-Origin", configs.LoadEnv("CORS_URL"))
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == "OPTIONS"{
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 func hasher(pass string) string {
 	hash := sha256.Sum256([]byte(pass))
 	return base64.StdEncoding.EncodeToString(hash[:])
@@ -162,21 +174,13 @@ func login(w http.ResponseWriter, r *http.Request) {
 func main() {
 	initMongo()
 	router := http.NewServeMux()
-	router.HandleFunc("/", renderer)
-	// The below shorten can be changed to use GET and POST methods for a different route named Delete_url. However
-	// Since this is an API and not a webpage, DELETE is used but it may be subject to change in future
 	router.Handle("GET /links", middleware.Auth(http.HandlerFunc(send_all)))
 	router.Handle("POST /delete", middleware.Auth(http.HandlerFunc(delete_link)))
 	router.Handle("POST /shorten", middleware.Auth(http.HandlerFunc(shorten)))
 	router.HandleFunc("POST /register", register)
 	router.HandleFunc("POST /login", login)
-	router.Handle("GET /user/{route}", http.HandlerFunc(renderer))
 	router.HandleFunc("GET /{shortened}", redirecter)
-	server := http.Server{
-		Addr:    ":8080",
-		Handler: router,
-	}
-	server.ListenAndServe()
+	http.ListenAndServe(":8080", enablecors(router))
 }
 
 func send_all(w http.ResponseWriter, r *http.Request) {
@@ -225,24 +229,6 @@ func send_all(w http.ResponseWriter, r *http.Request) {
     jsonResponse(w, links, http.StatusOK)
 }
 
-
-func renderer(w http.ResponseWriter, r *http.Request) {
-		path := r.PathValue("route")
-		log.Println(r.URL.Path)
-		if path == "" || path == "/" {
-			fmt.Printf("The path is : %s", r.URL.EscapedPath())
-			http.Redirect(w, r, "/user/login", http.StatusFound)
-			return
-		}
-		if strings.Contains(path, ".."){
-			jsonResponse(w, map[string]string{"message" : "Forbidden path"}, http.StatusForbidden)
-			return
-		}
-		if !strings.HasSuffix(path, ".html") {
-			path = path + ".html"
-		}
-		http.ServeFile(w, r, "./static/" + path)
-}
 
 // Function to redirect the shortened links with the original ones
 func redirecter(w http.ResponseWriter, r *http.Request) {
