@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"net/url"
 	"strings"
 	"time"
@@ -30,7 +32,23 @@ var (
 	signingKey                  = []byte(configs.LoadEnv("SECURE_KEY"))
 )
 
-// Added CORS for integration with frontend
+func spaHandler(distDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := filepath.Join(distDir, r.URL.Path)
+
+		// If file exists, serve it
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			http.ServeFile(w, r, path)
+			return
+		}
+
+		// Otherwise serve index.html (SPA fallback)
+		http.ServeFile(w, r, filepath.Join(distDir, "index.html"))
+	}
+}
+
+// Added CORS for integration with frontend 
+// Remove this function or comment it when the build is complete. Only use this if you are planning to run frontend and backend separately
 func enablecors(next http.Handler) http.Handler{
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
 		w.Header().Set("Access-Control-Allow-Origin", configs.LoadEnv("CORS_URL"))
@@ -180,6 +198,8 @@ func main() {
 	router.HandleFunc("POST /register", register)
 	router.HandleFunc("POST /login", login)
 	router.HandleFunc("GET /{shortened}", redirecter)
+	router.HandleFunc("/", spaHandler("./frontend/dist"))
+	//Remove enablecors middleware after building. This is only for development environment :)
 	http.ListenAndServe(":8080", enablecors(router))
 }
 
