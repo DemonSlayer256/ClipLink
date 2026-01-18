@@ -1,24 +1,20 @@
-const API_URL = import.meta.env.VITE_API_URL;
-
 /**
  * Helper function to parse JSON safely
  */
 const parseJSON = async (response) => {
   try {
-    const data = await response.json();
-    return data;
-  } catch (err) {
+    return await response.json();
+  } catch {
     return null;
   }
 };
 
 /**
  * Login user
- * Returns token string if success, null otherwise
  */
 export const loginUser = async (username, password) => {
   try {
-    const response = await fetch(`${API_URL}/login`, {
+    const response = await fetch("/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user: username, pass: password }),
@@ -40,11 +36,10 @@ export const loginUser = async (username, password) => {
 
 /**
  * Register user
- * Returns server response (success message or error)
  */
 export const registerUser = async (username, password) => {
   try {
-    const response = await fetch(`${API_URL}/register`, {
+    const response = await fetch("/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user: username, pass: password }),
@@ -62,30 +57,25 @@ export const registerUser = async (username, password) => {
 };
 
 /**
- * Fetch all links for the user
- * Always returns an array of URLMapping objects
+ * Fetch all links
  */
 export const fetchLinks = async (token) => {
   try {
-    const response = await fetch(`${API_URL}/links`, {
+    const response = await fetch("/links", {
       method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     const data = await parseJSON(response);
+
     if (!response.ok) {
       console.error("Fetch links failed:", data);
       return [];
     }
 
-    // If API returns an array directly
-    if (Array.isArray(data)) return data;
-
-    // If API returns object { links: [...] } or similar
-    if (Array.isArray(data.links)) return data.links;
-
-    // Fallback: single object or invalid data
-    return [];
+    return Array.isArray(data) ? data : [];
   } catch (err) {
     console.error("Fetch links error:", err);
     return [];
@@ -93,12 +83,11 @@ export const fetchLinks = async (token) => {
 };
 
 /**
- * Shorten a URL
- * Returns a URLMapping object on success or { error: ... } on failure
+ * Shorten URL
  */
 export const shortenUrl = async (url, token) => {
   try {
-    const response = await fetch(`${API_URL}/shorten`, {
+    const response = await fetch("/shorten", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -110,7 +99,6 @@ export const shortenUrl = async (url, token) => {
     const data = await parseJSON(response);
 
     if (!response.ok) {
-      console.error("Shorten URL failed:", data);
       return { error: data?.message || "Failed to shorten URL" };
     }
 
@@ -121,10 +109,12 @@ export const shortenUrl = async (url, token) => {
   }
 };
 
-
+/**
+ * Delete URL
+ */
 export const deleteUrl = async (code, token) => {
   try {
-    const response = await fetch(`${API_URL}/delete`, {
+    const response = await fetch("/delete", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -136,7 +126,6 @@ export const deleteUrl = async (code, token) => {
     const data = await parseJSON(response);
 
     if (!response.ok) {
-      console.error("Delete URL failed:", response);
       return { error: data?.message || "Failed to delete URL" };
     }
 
