@@ -2,10 +2,18 @@
 
 ## Overview
 
-ClipLink allows users to register, log in, shorten URLs, 
-delete shortened URLs, and redirect users from shortened links to their 
-original destinations. Built using Go, it utilizes MongoDB for data storage 
-and supports user authentication through JSON Web Tokens (JWT).
+ClipLink is a full-featured URL shortener that allows users to:
+- Register and log in.
+- Shorten long URLs to compact, shareable links.
+- Delete shortened URLs.
+- Redirect users from shortened links to their original destinations.
+- Track usage within user limits.
+
+Built using Go (Golang) for the backend and React + Vite for the frontend,
+it leverages MongoDB for storage and uses JWT (JSON Web Tokens) for authentication.
+ClipLink can serve the frontend directly from the Go backend for easy deployment.
+
+---
 
 ## Table of Contents
 
@@ -13,6 +21,7 @@ and supports user authentication through JSON Web Tokens (JWT).
 - [Technologies Used](#technologies-used)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Frontend Build & Deployment](#frontend-build--deployment)
 - [Usage](#usage)
 - [API Endpoints](#api-endpoints)
   - [User Registration](#user-registration)
@@ -20,175 +29,281 @@ and supports user authentication through JSON Web Tokens (JWT).
   - [Shortening a URL](#shortening-a-url)
   - [Deleting a URL](#deleting-a-url)
   - [Redirecting](#redirecting)
-  - [End Note](#endnote)
+- [Frontend Fetch Examples](#frontend-fetch-examples)
+- [Production Deployment Notes](#production-deployment-notes)
+- [End Note](#end-note)
+
+---
 
 ## Features
 
-- User registration and login with hashed passwords.
-- URL shortening capabilities with expiration times.
+- User registration and login with hashed passwords (SHA-256).
+- URL shortening with a 48-hour TTL (configurable).
+- Maximum of 5 active URLs per user (configurable).
 - Ability to delete shortened URLs.
-- Redirection from shortened URLs to original destinations.
-- JWT for user authentication and session management.
+- Redirection from shortened URLs to original URLs.
+- JWT-based authentication for secure API access.
+- Frontend served via Go backend for production convenience.
+- CORS configuration for frontend-backend integration.
+- Safe URL normalization and validation.
+
+---
 
 ## Technologies Used
 
-- Go (Golang) for the backend.
-- MongoDB for data storage.
-- JWT (JSON Web Tokens) for user authentication.
-- bufio, encoding/json, net/http, and other standard libraries for functionality.
+- **Backend:** Go (Golang)
+- **Frontend:** React + Vite
+- **Database:** MongoDB
+- **Authentication:** JSON Web Tokens (JWT)
+- **Other Libraries:** crypto/sha256, encoding/json, net/http, go.mongodb.org/mongo-driver
+
+---
 
 ## Installation
 
 ### Prerequisites
 
 1. Install Go (1.22 or later).
-2. Install MongoDB.
-3. Set up a MongoDB instance (either locally or remotely).
+2. Install Node.js (16+ recommended) for building the frontend.
+3. Install MongoDB and run an instance locally or remotely.
 
 ### Steps
 
 1. Clone the repository:
-  ```bash
-  git clone https://github.com/Dome
-  cd ClipLink
-  ```
 
-2. Install the necessary Go modules:
-  ```bash
-  go mod tidy
-  ```
+```bash
+git clone https://github.com/DemonSlayer256/ClipLink.git
+cd ClipLink
+```
 
-3. Create a .env file in the root of the project with the MongoDB URI:
-  ```bash
-  MONGODB_URI="mongodb://localhost:27017"
-  ```
+2. Install Go dependencies:
 
-4. Run the service:
-  ```bash
-   go run main.go
-   ```
+```bash
+go mod tidy
+```
 
-The server will start by default on port **8080**.
+3. Install frontend dependencies:
+
+```bash
+cd frontend
+npm install
+```
+
+4. Configure environment variables in .env:
+
+```
+- MONGO_URI="mongodb://localhost:27017"
+- SECURE_KEY="your_jwt_secret_key"
+- CORS_URL="http://localhost:5173"
+```
+
+---
+
+## Frontend Build & Deployment
+
+1. Build the React frontend:
+
+```bash
+cd frontend
+npm run build
+```
+
+This generates a dist/ folder with static files.
+
+2. Serve the frontend via Go backend:
+
+- The Go backend is set to serve static files and API endpoints from `dist/` folder.
+- Start the server:
+
+```bash
+go run main.go
+```
+
+3. Access the app:
+
+- Go to http://localhost:8080 to see your frontend served by Go.
+
+---
 
 ## Configuration
 
-You can configure various parameters in the code:
+Adjust these in your .env or Go code:
 
-- **MongoDB URI**: Adjust this in the .env file.
-- **TTL for URLs**: Modify the max_TTL variable (in hours) for how long a shortened URL is valid.
+- **MongoDB URI:** `MONGO_URI`
+- **JWT Secret Key:** `SECURE_KEY`
+- **CORS URL:** `CORS_URL` (React dev or deployed domain)
+- **Max URLs per user:** `max_url_limit` in Go
+- **URL TTL:** `max_TTL` in Go (in hours)
+
+---
 
 ## Usage
 
-### Registering a User
+### Register a User
 
-To register a new user, send a POST request to /register with the following JSON body:
 ```bash
+POST /register
+Content-Type: application/json
+
 {
   "user": "username",
-  "password": "yourpassword"
+  "pass": "yourpassword"
 }
 ```
 
-### Logging In
+### Login
 
-To log in, send a POST request to /login with the user's credentials:
 ```bash
+POST /login
+Content-Type: application/json
+
 {
-  "username": "username",
-  "password": "yourpassword"
+  "user": "username",
+  "pass": "yourpassword"
 }
 ```
 
-You will receive a token upon successful authentication.
+- Response includes a JWT token: `{"token": "your_jwt_token"}`
 
-### Shortening a URL
+### Shorten a URL
 
-Send a POST request to /shorten with the following JSON body and include the JWT token in the Authorization header:
 ```bash
+POST /shorten
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+
 {
   "url": "https://example.com"
 }
 ```
 
-### Deleting a URL
+### Delete a URL
 
-To delete a shortened URL, send a DELETE request to /shorten with the JSON body containing the shortened code, and include the JWT token in the Authorization header:
 ```bash
+POST /delete
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+
 {
   "code": "shortenedCode"
 }
 ```
 
-### Redirecting
+### Redirect
 
-Request the shortened URL (e.g., http://localhost:8080/yourShortCode) to be redirected to the original URL.
+- Access shortened URL: http://localhost:8080/<shortenedCode>
+- Automatically redirects to original URL.
+
+---
 
 ## API Endpoints
 
 ### User Registration
 
-- **Endpoint**: /register
-- **Method**: POST
-- **Body**:
-```bash
-{
-  "user": "username",
-  "password": "yourpassword"
-}
-```
-- **Responses**:
-    - 201 Created: Successful registration.
-    - 409 Conflict: User already exists.
-    - 400 Bad Request: Invalid JSON data.
+- `POST /register`
+- Body: `{"user": "username", "pass": "password"}`
+- Responses:
+  - 201 Created: User registered
+  - 409 Conflict: User already exists
+  - 400 Bad Request: Invalid JSON
 
 ### User Login
 
-- **Endpoint**: /login
-- **Method**: POST
-- **Body**:
-```bash
-{
-  "username": "username",
-  "password": "yourpassword"
-}
+- `POST /login`
+- Body: `{"user": "username", "pass": "password"}`
+- Responses:
+  - 200 OK: Returns JWT token
+  - 401 Unauthorized: Invalid credentials
+
+### Shorten URL
+
+- `POST /shorten`
+- Headers: `Authorization: Bearer <token>`
+- Body: `{"url": "https://example.com"}`
+
+### Delete URL
+
+- `POST /delete`
+- Headers: `Authorization: Bearer <token>`
+- Body: `{"code": "shortenedCode"}`
+
+### Redirect
+
+- `GET /<shortenedCode>`
+- Responses:
+  - 302 Found: Redirect to original URL
+  - 404 Not Found: URL expired or invalid
+
+---
+
+## Frontend Fetch Examples
+
+Here are examples using `import.meta.env.VITE_API_URL` in React:
+
+```javascript
+const API_URL = import.meta.env.VITE_API_URL;
+
+// Login
+const loginUser = async (username, password) => {
+  const response = await fetch(`${API_URL}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: username, pass: password }),
+  });
+  return await response.json();
+};
+
+// Shorten URL
+const shortenUrl = async (url, token) => {
+  const response = await fetch(`${API_URL}/shorten`, {
+    method: "POST",
+    headers: { 
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify({ url }),
+  });
+  return await response.json();
+};
 ```
-- **Responses**:
-    - 200 OK: Successful login with a token.
-    - 401 Unauthorized: Invalid credentials.
 
-### Shortening a URL
+---
 
-- **Endpoint**: /shorten
-- **Method**: POST
-- **Headers**: Authorization: Bearer <token>
-- **Body**:
-```bash
-{
-  "url": "https://example.com"
-}
-```
+## Production Deployment Notes
 
-### Deleting a URL
+1. **Single Backend Deployment:**
+   - Go backend serves both API and static frontend.
+   - Ensures no CORS issues and easier hosting.
 
-- **Endpoint**: /shorten
-- **Method**: DELETE
-- **Headers**: Authorization: Bearer <token>
-- **Body**:
-```bash
-{
-  "code": "shortenedCode"
-}
-```
+2. **Temporary Public Hosting:**
+   - Use services like `ngrok` for 48-hour public access without a domain.
 
-### Redirecting
+3. **Environment Variables:**
+   - Keep `SECURE_KEY` secret.
+   - MongoDB URI should be secured if using remote database.
 
-- **Endpoint**: /{shortened}
-- **Method**: GET
-- **Responses**:
-    - 302 Found: Redirects to the link associated with the shortened code
-    - 404 NotFound: The code has expired or the page is not found
+4. **Frontend Build:**
+   - Always run `npm run build` before deploying to production.
+
+5. **Recommended Hosting:**
+   - VPS, cloud instance (AWS EC2, DigitalOcean), or containerized Docker deployment.
+
+6. **Logging & Debugging:**
+   - Go logs errors in the terminal.
+   - Monitor MongoDB TTL index for automatic URL expiration.
+
+---
 
 ## End Note
 
- ClipLink provides a simple, secure, and extensible URL‑shortening service. By leveraging Go's performance, MongoDB's flexible storage, and JWT‑based authentication, the project demonstrates a production‑ready backend that can be easily deployed, customized, and integrated into larger systems.
-Feel free to fork, extend the feature set (e.g., analytics, custom domains) or contribute improvements via pull requests.
+ClipLink provides a **secure, scalable, and production-ready URL shortening service**.  
+It demonstrates:
+
+- Serving React frontend via Go.
+- JWT authentication for secure APIs.
+- MongoDB TTL indexes for automatic link expiration.
+- Easy deployment and temporary public sharing.
+
+> Extend ClipLink with analytics, custom domains, or unlimited links per user.
+
+# Thank You for Using ClipLink!
