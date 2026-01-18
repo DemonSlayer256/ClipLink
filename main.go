@@ -190,7 +190,7 @@ func send_all(w http.ResponseWriter, r *http.Request) {
     // Retrieve the username from the context
     user, ok := r.Context().Value("username").(string)
     if !ok {
-        jsonResponse(w, map[string]string{"Error": "Something happened"}, http.StatusInternalServerError)
+        jsonResponse(w, map[string]string{"message": "Something happened"}, http.StatusInternalServerError)
         return
     }
 
@@ -200,7 +200,7 @@ func send_all(w http.ResponseWriter, r *http.Request) {
     // Find all links for the user
     cursor, err := link_coll.Find(ctx, filter)
     if err != nil {
-        jsonResponse(w, map[string]string{"Error": "Error fetching links"}, http.StatusInternalServerError)
+        jsonResponse(w, map[string]string{"message": "Error fetching links"}, http.StatusInternalServerError)
         return
     }
     defer cursor.Close(ctx) // Ensure the cursor is closed when done
@@ -212,7 +212,7 @@ func send_all(w http.ResponseWriter, r *http.Request) {
     for cursor.Next(ctx) {
         var link m.URLMapping
         if err := cursor.Decode(&link); err != nil {
-            jsonResponse(w, map[string]string{"Error": "Error decoding links"}, http.StatusInternalServerError)
+            jsonResponse(w, map[string]string{"message": "Error decoding links"}, http.StatusInternalServerError)
             return
         }
 		link.Link =  "https://" + link.Link
@@ -221,7 +221,7 @@ func send_all(w http.ResponseWriter, r *http.Request) {
 
     // Check for cursor errors
     if err := cursor.Err(); err != nil {
-        jsonResponse(w, map[string]string{"Error": "Error during cursor iteration"}, http.StatusInternalServerError)
+        jsonResponse(w, map[string]string{"message": "Error during cursor iteration"}, http.StatusInternalServerError)
         return
     }
 
@@ -249,7 +249,7 @@ func delete_link(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	username, ok := r.Context().Value("username").(string)
 	if !ok {
-		jsonResponse(w, map[string]string{"Error": "Something happened"}, http.StatusInternalServerError)
+		jsonResponse(w, map[string]string{"message": "Something happened"}, http.StatusInternalServerError)
 	}
 	var data struct {
 		Code string `json:"code"`
@@ -275,7 +275,7 @@ func delete_link(w http.ResponseWriter, r *http.Request) {
 		log.Println("Error updating remaining: ", err)
 		return
 	}
-	jsonResponse(w, map[string]string{"Message": "Successfully deleted"}, http.StatusFound)
+	jsonResponse(w, map[string]string{"Message": "Successfully deleted"}, http.StatusOK)
 }
 
 func normalize(link string) string {
@@ -325,7 +325,7 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 	}
 	username, ok := r.Context().Value("username").(string)
 	if !ok {
-		jsonResponse(w, map[string]string{"Error": "Something happened"}, http.StatusInternalServerError)
+		jsonResponse(w, map[string]string{"message": "Something happened"}, http.StatusInternalServerError)
 		return
 	}
 
@@ -333,18 +333,27 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Recieved: Link: %s", data.URL)
 	normalized := normalize(data.URL)
 	if normalized == "" {
-		jsonResponse(w, map[string]string{"Error": "Invalid URL. Expected {\"url\": \"https://example.com\"} but recieved something else"}, http.StatusBadRequest)
+		jsonResponse(w, map[string]string{"message": "Invalid URL. Expected {\"url\": \"https://example.com\"} but recieved something else"}, http.StatusBadRequest)
 		return
 	}
 	if valid_url := check("link", normalized, true, username); valid_url != "" {
-		resp := map[string]string{
-			"short_url": valid_url,
+		// Fetch the existing document from the database
+		var existingDoc m.URLMapping
+		filter := bson.M{"shorted": valid_url, "user": username}
+		err := link_coll.FindOne(r.Context(), filter).Decode(&existingDoc)
+		if err != nil {
+			// fallback: if somehow the document is missing, return only short_url
+			jsonResponse(w, map[string]string{"shorted": valid_url}, http.StatusCreated)
+			return
 		}
-		jsonResponse(w, resp, http.StatusCreated)
+
+		// Return the full document
+		jsonResponse(w, existingDoc, http.StatusCreated)
 		return
 	}
+
 	if !within_limit(username) {
-		jsonResponse(w, map[string]string{"Error": "You cannot have more than 5 active links."}, http.StatusBadRequest)
+		jsonResponse(w, map[string]string{"message": "You cannot have more than 5 active links."}, http.StatusBadRequest)
 		return
 	}
 	code := code_gen()
@@ -363,7 +372,7 @@ func shorten(w http.ResponseWriter, r *http.Request) {
 		log.Println("Error insertion: ", err)
 		return
 	}
-	jsonResponse(w, map[string]string{"short_url": code}, http.StatusCreated)
+	jsonResponse(w, doc, http.StatusCreated)
 }
 
 func jsonResponse(w http.ResponseWriter, data interface{}, status int) {
